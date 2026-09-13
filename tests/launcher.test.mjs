@@ -19,12 +19,20 @@ function harness({url='https://www.facebook.com/',actorId='456',status='complete
   scripting:{executeScript:async options=>{calls.scripts.push(options);return options.args?.[0]?.kind==='identify'?[{frameId:0,result:{ok:true,actor:{...identity}}}]:[]}}
  };
  const context=vm.createContext(sandbox);vm.runInContext(calendar,context);vm.runInContext(code,context);
- const message=(kind,period=all,expectedActorId=actorId,sender={id:'test',url:'chrome-extension://test/popup.html'})=>new Promise(resolve=>handlers.message({channel:'postsweep-ui-v1',kind,period,expectedActorId},sender,resolve));
+ const message=(kind,period=all,expectedActorId=actorId,sender={id:'test',url:'chrome-extension://test/popup.html'})=>new Promise(resolve=>handlers.message({channel:'postsweep-ui-v1',protocol:2,kind,period,expectedActorId},sender,resolve));
  return {calls,storage,prefs,tabs,identity,handlers,message,jobs:()=>calls.scripts.filter(x=>x.func?.name==='startCleaner'),complete:async(url=target(actorId))=>{Object.assign(tabs.get(42),{url,status:'complete'});await handlers.updated(42,{status:'complete'})},remove:()=>handlers.removed(42)};
 }
 test('toolbar opens a picker; preview only identifies the current profile',async()=>{
  const manifest=JSON.parse(readFileSync(new URL('../manifest.json',import.meta.url),'utf8'));assert.equal(manifest.action.default_popup,'popup.html');
- const h=harness();assert.equal(h.handlers.click,undefined);assert.equal((await h.message('preview')).actor.id,'456');assert.equal(h.calls.updates.length,0);assert.equal(h.jobs().length,0);
+ const h=harness();assert.equal(h.handlers.click,undefined);const preview=await h.message('preview');assert.equal(preview.actor.id,'456');assert.equal(preview.protocol,2);assert.equal(h.calls.updates.length,0);assert.equal(h.jobs().length,0);
+});
+test('an incompatible popup cannot identify, navigate or start work',async()=>{
+ const h=harness();
+ for(const protocol of [undefined,1,3])for(const kind of ['preview','start']){
+  const reply=await new Promise(resolve=>h.handlers.message({channel:'postsweep-ui-v1',protocol,kind,period:all,expectedActorId:'456'},{id:'test',url:'chrome-extension://test/popup.html'},resolve));
+  assert.equal(reply.ok,false);assert.equal(reply.code,'UPDATE_REQUIRED');
+ }
+ assert.equal(h.calls.scripts.length,0);assert.equal(h.calls.updates.length,0);
 });
 test('Start navigates to the selected active Page and starts only once after loading',async()=>{
  const h=harness();assert.equal((await h.message('start')).ok,true);assert.equal(h.calls.updates[0].url,target('456'));assert.equal(h.jobs().length,0);

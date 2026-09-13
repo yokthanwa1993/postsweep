@@ -5,6 +5,8 @@ import './calendar.js';
 
 const PENDING_PREFIX = 'cleanerPendingStart:';
 const MAX_PENDING_MS = 60_000;
+// A cached worker must not accept Start from a different popup protocol.
+const UI_PROTOCOL = 2;
 const starting = new Set(), clicking = new Set();
 const pendingKey = tabId => PENDING_PREFIX + tabId;
 const activityURL = actorId => {
@@ -100,12 +102,15 @@ chrome.tabs.onRemoved.addListener(tabId=>chrome.storage.session.remove(pendingKe
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if (message?.channel === 'postsweep-ui-v1') {
     if (sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('popup.html') || !['preview','start'].includes(message.kind)) {
-      reply({ok:false,message:'เริ่มงานจากปุ่มในส่วนขยายเท่านั้น'}); return;
+      reply({ok:false,code:'INVALID_UI_SOURCE',message:'เริ่มงานจากปุ่มในส่วนขยายเท่านั้น'}); return;
+    }
+    if (message.protocol !== UI_PROTOCOL) {
+      reply({ok:false,code:'UPDATE_REQUIRED',message:'โหลดส่วนขยายใหม่เพื่อใช้รุ่นล่าสุด'}); return;
     }
     void (async()=>{
       try {
         const {actor,activeTab} = await resolveActor();
-        if (message.kind === 'preview') {reply({ok:true,actor});return;}
+        if (message.kind === 'preview') {reply({ok:true,protocol:UI_PROTOCOL,actor});return;}
         if (message.expectedActorId !== actor.id) throw new Error('เพจหรือโปรไฟล์เปลี่ยนไปแล้ว ปิดแล้วเปิดส่วนขยายใหม่เพื่อตรวจชื่อก่อนเริ่ม');
         if (!message.period) throw new Error('เลือกช่วงเวลาก่อนเริ่มลบ');
         const period = globalThis.mountPostSweepCalendar.normalize(message.period);

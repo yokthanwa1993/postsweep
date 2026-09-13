@@ -1,9 +1,10 @@
 <!doctype html><html lang="th"><meta charset="utf-8"><title>Facebook Cleaner — local test</title><style>body{background:#f2f3ef;color:#586453;font:16px -apple-system,Thonburi,Tahoma,sans-serif;padding:50px;line-height:1.8}main{max-width:730px;margin:auto}article{background:white;border:1px solid #e1e6db;border-radius:13px;padding:22px;margin:17px 0;color:#96a08c}.test-label{font-size:11px;letter-spacing:1px;color:#90a581}h1{color:#40553a;font-size:30px}</style><main><div class="test-label">LOCAL TEST / ข้อมูลจำลอง</div><h1>ทดสอบการลบโพสต์ทั้งหมด</h1><p>หน้าทดสอบนี้ไม่มีการเชื่อมต่อกับ Facebook<br>หน้าต่างกลางจอคือส่วนขยายจริงที่ทำงานกับข้อมูลจำลอง</p><article>โพสต์ตัวอย่างที่ 1</article><article>โพสต์ตัวอย่างที่ 2</article><article>โพสต์ตัวอย่างที่ 3</article></main><script type="module">
 import { startCleaner } from '../controller.js';
+import '../calendar.js';
 const mode=new URL(location.href).searchParams.get('mode')||'complete';
 const context={actorId:'123',accountId:'123',origin:'https://www.facebook.com',path:'/123/allactivity',name:'บัญชีทดสอบ'};
 const slow=['stop','double','screenshot'].includes(mode);
-const initial=Array.from({length:mode==='screenshot'?1800:mode==='complete'?63:12},(_,i)=>({storyId:'story-'+i,postId:String(i+1),canTrash:mode==='complete'?i%11!==0:true}));
+const initial=Array.from({length:mode==='screenshot'?1800:mode==='complete'?63:12},(_,i)=>({storyId:'story-'+i,postId:String(i+1),createdAt:Date.parse('2026-09-12T14:00:00Z')/1000-Math.floor(i/12)*86400,canTrash:mode==='complete'?i%11!==0:true}));
 const savedSpeed = new URL(location.href).searchParams.get('speed');
 const preferences = { cleanerSpeedLevel: savedSpeed ? Number(savedSpeed) : 5 };
 const state=window.testState={mode,calls:[],inFlight:0,maxInFlight:0,removed:[],connects:0,preferences,dispatches:[]};

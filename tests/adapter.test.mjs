@@ -60,3 +60,74 @@ test('newline streaming and anti-JSON prefix parse correctly',async()=>{const h=
 test('returned actor must match the connected identity',async()=>{const response=structuredClone(sample);response.data.viewer.activity_log_actor.id='wrong';const h=harness({response});assert.equal((await h.run({kind:'scan',context})).code,'RESPONSE_ACTOR')});
 test('missing options and unsafe links are filtered',async()=>{const response=structuredClone(sample);const edge=response.data.viewer.activity_log_actor.activity_log_stories.edges[0];edge.options=[];edge.node.url='javascript:alert(1)';const r=await harness({response}).run({kind:'scan',context});assert.equal(r.posts[0].canTrash,false);assert.equal(r.posts[0].url,'')});
 test('changed schema fails closed',async()=>{const response=structuredClone(sample);delete response.data.viewer.activity_log_actor.activity_log_stories.page_info;assert.equal((await harness({response}).run({kind:'scan',context})).code,'SCHEMA_CHANGED')});
+
+const september = { kind: 'month', year: 2026, month: 9 };
+const successfulMutation = { data: { activity_log_story_curation: { success: true, story: { id: post.storyId } } } };
+test('month boundaries include Bangkok midnight and exclude the next month', async () => {
+  for (const [iso, allowed] of [
+    ['2026-08-31T16:59:59Z', false], ['2026-08-31T17:00:00Z', true],
+    ['2026-09-30T16:59:59Z', true], ['2026-09-30T17:00:00Z', false],
+    ['2025-09-15T12:00:00Z', false]
+  ]) {
+    const h = harness({ response: successfulMutation });
+    const result = await h.run({ kind: 'trash', context, period: september, post: { ...post, createdAt: Date.parse(iso) / 1000 } });
+    assert.equal(result.ok, allowed, iso); assert.equal(h.calls.length, allowed ? 1 : 0, iso);
+    if (!allowed) { assert.equal(result.code, 'OUTSIDE_PERIOD'); assert.equal(result.uncertain, false); }
+  }
+});
+test('leap day and December rollover use exclusive month end', async () => {
+  for (const [period, iso, allowed] of [
+    [{kind:'month',year:2024,month:2}, '2024-02-29T16:59:59Z', true],
+    [{kind:'month',year:2024,month:2}, '2024-02-29T17:00:00Z', false],
+    [{kind:'month',year:2025,month:12}, '2025-12-31T16:59:59Z', true],
+    [{kind:'month',year:2025,month:12}, '2025-12-31T17:00:00Z', false]
+  ]) {
+    const h = harness({response:successfulMutation});
+    assert.equal((await h.run({kind:'trash',context,period,post:{...post,createdAt:Date.parse(iso)/1000}})).ok,allowed,iso);
+    assert.equal(h.calls.length,allowed?1:0);
+  }
+});
+test('unknown or malformed post dates cannot pass a monthly mutation guard', async () => {
+  for (const createdAt of [undefined, null, 0, -1, NaN, Infinity, '1789223599']) {
+    const h = harness({response:successfulMutation});
+    assert.equal((await h.run({kind:'trash',context,period:september,post:{...post,createdAt}})).code,'OUTSIDE_PERIOD');
+    assert.equal(h.calls.length,0);
+  }
+});
+test('malformed scopes fail before any request rather than widening to all dates', async () => {
+  for (const period of [null, {}, {kind:'year'}, {kind:'month',year:2026,month:0}, {kind:'month',year:2026,month:13}, {kind:'month',year:'2026',month:9}, {kind:'month',year:2003,month:9}]) {
+    for (const kind of ['scan','trash']) {
+      const h = harness(); assert.equal((await h.run({kind,context,period,post})).code,'INVALID_PERIOD'); assert.equal(h.calls.length,0);
+    }
+  }
+});
+test('monthly scanning retains every date for controller filtering and pagination', async () => {
+  const h = harness(); const r = await h.run({kind:'scan',context,period:september,cursor:'test-cursor'});
+  assert.equal(r.ok,true); assert.equal(r.posts.length,25); assert.equal(r.posts[0].createdAt,1700000000);
+  const variables = JSON.parse(h.calls[0].body.get('variables'));
+  assert.equal(variables.year,null); assert.equal(variables.month,null); assert.equal(variables.cursor,'test-cursor');
+});
+test('all-dates mode still accepts an eligible post without a timestamp', async () => {
+  const h = harness({response:successfulMutation});
+  assert.equal((await h.run({kind:'trash',context,period:{kind:'all'},post})).ok,true);
+});
+test('day and inclusive cross-month ranges are enforced before mutations', async () => {
+  for (const period of [{kind:'day',year:2026,month:9,day:12},{kind:'range',start:'2026-09-12',end:'2026-10-02'}]) {
+    const end=period.kind==='day'?'2026-09-12T17:00:00Z':'2026-10-02T17:00:00Z';
+    for(const [stamp,allowed] of [[Date.parse('2026-09-11T17:00:00Z')/1000,true],[Date.parse('2026-09-11T16:59:59Z')/1000,false],[Date.parse(end)/1000-1,true],[Date.parse(end)/1000,false]]) {
+      const h=harness({response:successfulMutation});assert.equal((await h.run({kind:'trash',context,period,post:{...post,createdAt:stamp}})).ok,allowed);assert.equal(h.calls.length,allowed?1:0);
+    }
+  }
+});
+test('impossible dates and incomplete or reversed ranges are rejected',async()=>{
+  for(const period of [{kind:'day',year:2026,month:2,day:29},{kind:'range',start:'2026-09-12'},{kind:'range',start:'2026-9-01',end:'2026-09-02'},{kind:'range',start:'2026-02-30',end:'2026-03-02'},{kind:'range',start:'2026-09-12',end:'2026-09-01'}]) {
+    const h=harness();assert.equal((await h.run({kind:'trash',context,period,post})).code,'INVALID_PERIOD');assert.equal(h.calls.length,0);
+  }
+});
+test('profile preview reads the active Page from any Facebook page without a request',async()=>{
+  const h=harness({url:'https://www.facebook.com/',userId:'99999',accountId:actor});const r=await h.run({kind:'identify'});assert.equal(r.ok,true);assert.equal(r.actor.id,'99999');assert.equal(h.calls.length,0);assert(!JSON.stringify(r).includes(secret));
+});
+test('a profile change after popup selection blocks connection and all mutation',async()=>{
+  const h=harness();assert.equal((await h.run({kind:'connect',expectedActorId:'99999'})).code,'ACTOR_CHANGED');assert.equal(h.calls.length,0);
+  const page=harness({userId:'99999',accountId:actor});assert.equal((await page.run({kind:'connect',expectedActorId:'99999'})).code,'ACTOR_MISMATCH');assert.equal(page.calls.length,0);
+});

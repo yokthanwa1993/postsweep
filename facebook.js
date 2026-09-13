@@ -21,10 +21,7 @@ export async function facebookRequest(request) {
     if (url.protocol !== 'https:' || !['www.facebook.com', 'web.facebook.com', 'facebook.com'].includes(url.hostname)) {
       return fail('WRONG_SITE', 'เปิดส่วนขยายจากแท็บ Facebook เท่านั้น');
     }
-    if (!/\/allactivity\/?$/.test(url.pathname) || url.searchParams.get('category_key') !== CATEGORY) {
-      return fail('WRONG_PAGE', 'เปิดบันทึกกิจกรรม → โพสต์ → โพสต์ รูปภาพ และวิดีโอของคุณ แล้วกดส่วนขยายอีกครั้ง');
-    }
-    if (!request || !['connect', 'scan', 'trash'].includes(request.kind)) return fail('INVALID_REQUEST', 'คำสั่งไม่ถูกต้อง');
+    if (!request || !['identify', 'connect', 'scan', 'trash'].includes(request.kind)) return fail('INVALID_REQUEST', 'คำสั่งไม่ถูกต้อง');
     const user = read('CurrentUserInitialData');
     const getParams = read('getAsyncParams');
     if (!user?.USER_ID || user.USER_ID === '0' || typeof getParams !== 'function') {
@@ -34,6 +31,11 @@ export async function facebookRequest(request) {
     const accountId = String(user.ACCOUNT_ID || params.__user || user.USER_ID);
     const pathActor = url.pathname.split('/').filter(Boolean).slice(-2)[0];
     const sessionActorId = String(user.USER_ID);
+    if (request.kind === 'identify') return { ok: true, actor: { id: sessionActorId, name: string(user.NAME) || sessionActorId } };
+    if (request.expectedActorId && request.expectedActorId !== sessionActorId) return fail('ACTOR_CHANGED', 'เพจหรือโปรไฟล์เปลี่ยนไปแล้ว เลือกโปรไฟล์และเริ่มงานใหม่');
+    if (!/\/allactivity\/?$/.test(url.pathname) || url.searchParams.get('category_key') !== CATEGORY) {
+      return fail('WRONG_PAGE', 'เปิดบันทึกกิจกรรมของโปรไฟล์ที่กำลังใช้ แล้วเริ่มงานจากส่วนขยายอีกครั้ง');
+    }
     const numericTarget = pathActor && /^\d+$/.test(pathActor) ? pathActor : null;
     const ownIdentities = new Set([sessionActorId, accountId]);
     if (numericTarget && !ownIdentities.has(numericTarget)) {
@@ -42,6 +44,7 @@ export async function facebookRequest(request) {
     // Facebook can show an account's activity log while the top-right profile is a Page.
     // The captured requests address that account explicitly through `av`, not the Page's ID.
     const actorId = numericTarget || String(params.av || sessionActorId);
+    if (request.expectedActorId && actorId !== request.expectedActorId) return fail('ACTOR_MISMATCH', 'หน้าบันทึกกิจกรรมไม่ตรงกับโปรไฟล์ที่เลือก ยังไม่ได้เริ่มลบ');
     if (!ownIdentities.has(actorId)) return fail('ACTOR_MISMATCH', 'บริบทบัญชีไม่ตรงกัน ให้รีเฟรชหน้า Facebook ก่อน');
     const context = { actorId, accountId, sessionActorId, origin: url.origin, path: url.pathname, name: actorId === sessionActorId ? string(user.NAME) || actorId : 'บัญชีเจ้าของบันทึกกิจกรรม' };
     if (request.context && ['actorId', 'accountId', 'sessionActorId', 'origin', 'path'].some(key => request.context[key] !== context[key])) {
@@ -50,6 +53,30 @@ export async function facebookRequest(request) {
     if (request.kind === 'connect') return { ok: true, context };
     if (!request.context) return fail('NO_CONTEXT', 'ต้องเชื่อมต่อบัญชีก่อน');
     if (!params.fb_dtsg) return fail('SESSION_EXPIRED', 'เซสชัน Facebook ไม่พร้อม ให้รีเฟรชหน้าแล้วเชื่อมต่อใหม่');
+
+    // Validate the immutable run scope again at the network boundary.
+    const period = request.period === undefined ? { kind: 'all' } : request.period;
+    let bounds = null;
+    try {
+      const parts = value => {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('INVALID_DATE');
+        const [year, month, day] = value.split('-').map(Number);
+        if (year < 2004 || year > 2200 || month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate()) throw new Error('INVALID_DATE');
+        return {year,month,day};
+      };
+      const midnight = date => Date.UTC(date.year, date.month - 1, date.day) / 1000 - 25200;
+      if (!period || !['all', 'month', 'day', 'range'].includes(period.kind)) throw new Error('INVALID_PERIOD');
+      if (period.kind === 'range') {
+        const start = parts(period.start), end = parts(period.end);
+        if (period.start > period.end) throw new Error('REVERSED_RANGE');
+        bounds = {start:midnight(start),end:midnight(end)+86400};
+      } else if (period.kind !== 'all') {
+        if (!Number.isInteger(period.year) || period.year < 2004 || period.year > 2200 || !Number.isInteger(period.month) || period.month < 1 || period.month > 12) throw new Error('INVALID_PERIOD');
+        if (period.kind === 'day' && (!Number.isInteger(period.day) || period.day < 1 || period.day > new Date(Date.UTC(period.year, period.month, 0)).getUTCDate())) throw new Error('INVALID_DAY');
+        const start = midnight({...period,day:period.day && period.kind === 'day' ? period.day : 1});
+        bounds = {start,end:period.kind === 'day' ? start+86400 : Date.UTC(period.year,period.month,1)/1000-25200};
+      }
+    } catch { return fail('INVALID_PERIOD', 'ช่วงเวลาที่เลือกไม่ถูกต้อง ยังไม่ได้เริ่มลบ'); }
 
     const mutation = request.kind === 'trash';
     const operation = mutation ? 'CometActivityLogItemCurationMutation' : 'CometActivityLogMainContentRootQuery';
@@ -61,19 +88,24 @@ export async function facebookRequest(request) {
       if (!post?.canTrash || typeof post.storyId !== 'string' || !post.storyId || !/^\d+$/.test(String(post.postId))) {
         return fail('INVALID_POST', 'โพสต์นี้ไม่มีคำสั่งย้ายไปถังขยะที่รองรับ');
       }
+      if (bounds) {
+        if (!Number.isFinite(post.createdAt) || post.createdAt < bounds.start || post.createdAt >= bounds.end) {
+          return fail('OUTSIDE_PERIOD', 'วันที่ของโพสต์ไม่อยู่ในช่วงที่เลือก จึงไม่ได้ส่งคำสั่งลบ');
+        }
+      }
       variables = { input: {
         action: 'MOVE_TO_TRASH', category_key: CATEGORY, deletion_request_id: null,
         post_id_str: String(post.postId), story_id: post.storyId, story_location: 'ACTIVITY_LOG',
         structured_error_handling: true, actor_id: actorId, client_mutation_id: crypto.randomUUID()
       } };
     } else {
-      const year = request.year == null ? null : Number(request.year);
-      if (year !== null && (!Number.isInteger(year) || year < 1900 || year > 2200)) return fail('INVALID_YEAR', 'ปีไม่ถูกต้อง');
+      // Scan the supported unfiltered connection and filter creation_time locally.
+      // Never assume pages are date-sorted, or stop at an out-of-month item.
       variables = {
         activity_history: false, audience: null, ayi_taxonomy: true,
         category: CATEGORY, category_key: CATEGORY, count: 25,
         cursor: request.cursor || null, entry_point: null, media_content_filters: [], month: null,
-        person_id: null, privacy: 'NONE', scale: Math.min(devicePixelRatio || 1, 2), timeline_visibility: 'ALL', year
+        person_id: null, privacy: 'NONE', scale: Math.min(devicePixelRatio || 1, 2), timeline_visibility: 'ALL', year: null
       };
     }
     const body = new URLSearchParams();

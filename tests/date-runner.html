@@ -1,0 +1,87 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Testing date controls</title><style>body{font:16px system-ui;margin:28px;line-height:1.8}iframe{width:900px;height:800px}li{padding:4px}</style><h1 id="title">กำลังทดสอบวันที่และการเลือกเดือน…</h1><ol id="results"></ol><div id="frames"></div><script type="module">
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const wait=async fn=>{for(let i=0;i<500;i++){if(fn())return;await sleep(20)}throw Error('timeout')};
+const assert=(v,m)=>{if(!v)throw Error(m)};
+const same=(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
+let passed=0;
+const cases=['month','day','range','leap','invalid','storage_error','progress','switch','cancel','save_failure','persist','all_dates'];
+for(const name of cases){
+  const li=document.createElement('li');li.textContent=name+' — testing';document.getElementById('results').append(li);
+  const f=document.createElement('iframe');f.src='date-fixture.html?mode='+(['cancel','save_failure','persist','all_dates'].includes(name)?'month':name);document.getElementById('frames').append(f);await new Promise(r=>f.onload=r);
+  try{
+    const w=f.contentWindow;await wait(()=>w.result);const getRoot=()=>w.document.getElementById('facebook-cleaner-panel').shadowRoot;
+    const root=getRoot();const $=id=>root.getElementById(id);const s=w.testState;
+    if(name==='progress'){
+      await wait(()=>s.pending.size===3);
+      assert($('current-date-label').textContent==='กำลังลบวันที่','missing current date label');
+      assert($('current-date').textContent.includes('12')&&$('current-date').textContent.includes('14'),'concurrent date range not shown');
+      assert($('last-removed-date').textContent==='ยังไม่มีรายการ','must wait for success acknowledgement');
+      $('stop').click();w.ack('oldest');await wait(()=>w.result().count===1);
+      assert($('last-removed-date').textContent.includes('12 ก.ย. 2026'),'first acknowledged date missing');
+      w.ack('newest');await wait(()=>w.result().count===2);
+      assert($('last-removed-date').textContent.includes('14 ก.ย. 2026'),'latest acknowledgement not updated');
+      assert($('oldest-date').textContent.includes('12 ก.ย. 2026'),'oldest successful date moved forward');
+      w.ack('middle',false);await wait(()=>!w.result().running);
+      assert(w.result().count===2&&$('last-removed-date').textContent.includes('14 ก.ย. 2026'),'failed post advanced progress');
+    }else if(name==='switch'){
+      await wait(()=>s.pending.size===3);
+      $('edit-period').click();assert($('apply-period').disabled,'new period enabled before draining');
+      root.querySelector('[data-scope="month"]').click();
+      const months=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+      const [month,year]=root.querySelector('.ps-month-title').textContent.split(' ');
+      const delta=(2026-Number(year))*12+8-months.indexOf(month);
+      for(let i=0;i<Math.abs(delta);i++)root.querySelector(`[data-move="${Math.sign(delta)}"]`).click();
+      const before=s.calls.filter(c=>c.kind==='trash').length;
+      w.startAgain();assert(w.document.querySelectorAll('#facebook-cleaner-panel').length===1,'toolbar bypassed editor');
+      for(const id of [...s.pending.keys()])w.ack(id);
+      await wait(()=>!w.result().running);await sleep(100);
+      assert(s.calls.filter(c=>c.kind==='trash').length===before,'editing sent extra old-scope requests');
+      assert(!$('apply-period').disabled,'editor did not become ready');
+      s.manual=false;$('apply-period').click();
+      await wait(()=>getRoot()!==root);await wait(()=>!w.result().running);
+      const newRequests=s.calls.filter(c=>c.kind==='trash').slice(before);
+      assert(same(newRequests.map(c=>c.post.storyId),['end','middle']),'switch deleted wrong month');
+      assert(newRequests.every(c=>c.period.kind==='month'&&c.period.year===2026&&c.period.month===9),'scope not sent to adapter');
+      assert(s.preferences.cleanerPeriod.month===9,'month not saved');
+    }else{
+      await wait(()=>!w.result().running);
+      if(name==='invalid'||name==='storage_error')assert(w.result().failed&&s.calls.length===0,'unreadable scope started a job');
+      else if(name==='leap')assert(same(s.removed,['leap']),'leap month boundary wrong');
+      else if(name==='day')assert(same(s.removed,['middle']),'single day filter wrong');
+      else if(name==='range')assert(same(s.removed,['before','start','middle']),'inclusive date range wrong');
+      else{
+        assert(same(s.removed,['start','end','middle']),'monthly filter skipped valid posts or deleted another month');
+        assert($('period-name').textContent==='กันยายน 2026','month/year label wrong');
+        assert($('period-note').textContent.includes('ไม่ระบุวันที่ 1'),'unknown date not explained');
+        if(name==='cancel'){
+          $('edit-period').click();$('cancel-period').click();await sleep(100);
+          assert(!w.result().running&&s.removed.length===3,'cancel resumed deletion');
+          assert(s.preferences.cleanerPeriod.month===9,'cancel changed stored scope');
+        }
+        if(name==='save_failure'){
+          s.failSave=true;$('edit-period').click();$('apply-period').click();await wait(()=>!$('apply-period').disabled);
+          assert(!w.result().running&&getRoot()===root,'save failure started deletion');
+          assert($('period-editor-note').textContent.includes('บันทึกช่วงเวลาไม่ได้'),'save failure hidden');
+        }
+        if(name==='persist'){
+          w.startAgain();await wait(()=>getRoot()!==root);await wait(()=>!w.result().running);
+          assert(s.removed.length===3&&w.result().count===0,'restart forgot selected month');
+          assert(getRoot().getElementById('period-name').textContent==='กันยายน 2026','saved scope not restored');
+        }
+        if(name==='all_dates'){
+          $('edit-period').click();root.querySelector('[data-scope="all"]').click();
+          assert(root.querySelector('.ps-month').hidden,'all mode still requires a month');$('apply-period').click();
+          await wait(()=>getRoot()!==root);await wait(()=>!w.result().running);
+          assert(same(s.removed,s.initial.filter(p=>p.canTrash).map(p=>p.storyId)),'all dates did not restore full scope');
+          assert(s.preferences.cleanerPeriod.kind==='all','all scope not saved');
+        }
+      }
+    }
+    assert(new Set(s.removed).size===s.removed.length,'duplicate mutation');
+    li.textContent='PASS — '+name;passed++;
+  }catch(e){li.textContent='FAIL — '+name+' · '+e.message;li.style.color='red'}
+  f.remove();
+}
+document.title=`${passed===cases.length?'PASS':'FAIL'} ${passed}/${cases.length} — Date controls`;
+document.getElementById('title').textContent=`วันที่และการเลือกเดือน ${passed}/${cases.length} ผ่าน · ไม่มีการลบโพสต์จริง`;
+</script></html>

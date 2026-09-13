@@ -1,0 +1,56 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Testing popup</title><style>body{font:16px system-ui;margin:28px;line-height:1.8}iframe{width:400px;height:620px;border:1px solid #ddd}</style><h1>ทดสอบปฏิทินใต้ไอคอน</h1><ol id="results"></ol><div id="frames"></div><script type="module">
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const wait=async fn=>{for(let i=0;i<300;i++){if(fn())return;await sleep(20)}throw Error('timeout')};
+const assert=(v,m)=>{if(!v)throw Error(m)};
+const months=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+const month=(d,year,number)=>{
+  if(d.querySelector('.ps-month').hidden)d.querySelector('[data-scope="month"]').click();
+  const [shownMonth,shownYear]=d.querySelector('.ps-month-title').textContent.split(' ');
+  const delta=(year-Number(shownYear))*12+number-1-months.indexOf(shownMonth);
+  for(let i=0;i<Math.abs(delta);i++)d.querySelector(`[data-move="${Math.sign(delta)}"]`).click();
+};
+let passed=0;
+const cases=['opening','all','month','day','range','reverse_range','new_range','saved','save_failure','invalid_saved','settings'];
+for(const name of cases){
+ const li=document.createElement('li');document.getElementById('results').append(li);
+ const prefs={cleanerPeriod:name==='saved'?{kind:'range',start:'2026-09-01',end:'2026-09-12'}:name==='invalid_saved'?{kind:'month',year:2026,month:99}:{kind:'all'}};
+ const state=window.popupState={calls:[],closed:0};
+ window.mockChrome={storage:{local:{get:async()=>structuredClone(prefs),set:async values=>{if(name==='save_failure')throw Error('storage unavailable');Object.assign(prefs,structuredClone(values))}}},runtime:{sendMessage:async message=>{if(message.kind==='preview')return {ok:true,actor:{id:'123',name:'เพจทดสอบ'}};state.calls.push(structuredClone(message));await sleep(30);return name==='save_failure'?{ok:false,message:'test unavailable'}:{ok:true}}}};
+ const page=await(await fetch(name==='settings'?'../start.html':'../popup.html')).text();
+ const f=document.createElement('iframe');f.srcdoc=page.replace('<head>','<head><base href="'+new URL('../',location.href).href+'"><script>window.chrome=parent.mockChrome;window.close=()=>parent.popupState.closed++;<'+ '/script>');document.getElementById('frames').append(f);await new Promise(r=>f.onload=r);
+ try{
+  const d=f.contentDocument,$=id=>d.getElementById(id);await wait(()=>!$('picker').disabled);
+  assert(state.calls.length===0,'opening popup started deletion');
+  if(name==='opening')assert(d.querySelector('[data-scope="all"]').getAttribute('aria-pressed')==='true','default is not all');
+  if(name==='month'||name==='day'){month(d,2026,9);if(name==='day')d.querySelector('[data-date="2026-9-12"]').click()}
+  if(['range','reverse_range','new_range'].includes(name)){
+   month(d,2026,9);d.querySelector('[data-scope="range"]').click();assert($('start').disabled,'empty range enabled');
+   d.querySelector('[data-date="2026-9-30"]').click();assert($('start').disabled,'one date enabled range deletion');
+   d.querySelector('[data-move="1"]').click();d.querySelector('[data-date="2026-10-2"]').click();assert(!$('start').disabled,'complete range disabled');
+   if(name==='reverse_range'){month(d,2026,9);d.querySelector('[data-date="2026-9-12"]').click();d.querySelector('[data-date="2026-9-7"]').click()}
+   if(name==='new_range'){d.querySelector('[data-date="2026-10-3"]').click();assert($('start').disabled,'new first date did not reset end')}
+  }
+  if(name==='saved')assert(d.querySelector('.ps-range-start').textContent.includes('1 ก.ย. 2026')&&d.querySelector('.ps-range-end').textContent.includes('12 ก.ย. 2026'),'saved range missing');
+  if(name==='invalid_saved')assert($('start').disabled&&$('feedback').dataset.error==='true','invalid saved scope allowed deletion');
+  if(!['opening','new_range','invalid_saved'].includes(name)){
+   $('start').click();$('start').click();await wait(()=>!$('picker').disabled);
+   if(name==='settings')assert(state.calls.length===0&&prefs.cleanerPeriod.kind==='all','settings unexpectedly started work');
+   else{
+    assert(state.calls.length===1,'double submission');const p=state.calls[0].period;
+    if(name==='month')assert(p.kind==='month'&&p.year===2026&&p.month===9,'wrong month');
+    if(name==='day')assert(p.kind==='day'&&p.day===12,'wrong day');
+    if(name==='range')assert(p.kind==='range'&&p.start==='2026-09-30'&&p.end==='2026-10-02','cross-month range wrong');
+    if(name==='reverse_range')assert(p.start==='2026-09-07'&&p.end==='2026-09-12','reversed clicks not sorted');
+    if(name==='save_failure')assert(state.closed===0&&$('feedback').dataset.error==='true','error closed popup');
+    else assert(state.closed===1,'successful start did not close popup');
+   }
+  }
+  await sleep(60);
+  const h=name==='settings'?f.clientHeight:580, maxWidth=name==='settings'?f.clientWidth:380;
+  assert(d.body.scrollHeight<=h&&d.body.scrollWidth<=maxWidth,`popup needs scrolling ${d.body.scrollWidth}x${d.body.scrollHeight}`);
+  li.textContent='PASS — '+name;passed++;
+ }catch(e){li.textContent='FAIL — '+name+' · '+e.message;li.style.color='red'}
+ f.remove();
+}
+document.title=`${passed===cases.length?'PASS':'FAIL'} ${passed}/${cases.length} — Popup calendar`;
+</script></html>

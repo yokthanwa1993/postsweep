@@ -1,0 +1,5 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>PostSweep popup preview — ข้อมูลจำลอง</title><style>html,body{margin:0;height:100%;background:#f0f2f5}body{display:flex;align-items:center;justify-content:center}iframe{width:380px;height:590px;border:0;border-radius:16px;box-shadow:0 14px 48px #0002;background:#fff}</style><script type="module">
+window.mockChrome={storage:{local:{get:async()=>({cleanerPeriod:{kind:'range',start:'2026-09-07',end:'2026-09-12'}}),set:async()=>{}}},runtime:{sendMessage:async message=>message.kind==='preview'?{ok:true,actor:{id:'123',name:'เพจตัวอย่าง'}}:{ok:true}}};
+const page=await(await fetch('../popup.html')).text();
+const f=document.createElement('iframe');f.srcdoc=page.replace('<head>','<head><base href="'+new URL('../',location.href).href+'"><script>window.chrome=parent.mockChrome;window.close=()=>{};<'+ '/script>');document.body.append(f);
+</script></html>

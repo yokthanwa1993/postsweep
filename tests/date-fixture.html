@@ -1,0 +1,39 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>PostSweep — date fixtures</title><script type="module">
+import { startCleaner } from '../controller.js';
+import '../calendar.js';
+const mode = new URL(location.href).searchParams.get('mode') || 'month';
+const make = (id, iso, canTrash = true) => ({ storyId: id, postId: String(id.length + 100), createdAt: iso ? Date.parse(iso) / 1000 : 0, canTrash });
+const mixed = [
+  make('after', '2026-09-30T17:00:00Z'), make('before', '2026-08-31T16:59:59Z'),
+  make('start', '2026-08-31T17:00:00Z'), make('unknown', null),
+  make('end', '2026-09-30T16:59:59Z'), make('previous-year', '2025-09-15T12:00:00Z'),
+  make('middle', '2026-09-12T14:00:00Z'), make('disabled', '2026-09-20T12:00:00Z', false),
+  make('leap', '2024-02-29T16:59:59Z'), make('after-leap', '2024-02-29T17:00:00Z')
+];
+const initial = mode === 'progress' ? [make('newest','2026-09-14T00:00:00Z'),make('middle','2026-09-13T00:00:00Z'),make('oldest','2026-09-12T00:00:00Z')] : mixed;
+const preferences = {cleanerSpeedLevel:5,cleanerPeriod:mode==='switch'||mode==='progress'?{kind:'all'}:mode==='invalid'?{kind:'month',year:2026,month:13}:mode==='leap'?{kind:'month',year:2024,month:2}:{kind:'month',year:2026,month:9}};
+if(mode==='day')preferences.cleanerPeriod={kind:'day',year:2026,month:9,day:12};
+if(mode==='range')preferences.cleanerPeriod={kind:'range',start:'2026-08-31',end:'2026-09-12'};
+const state = window.testState = { mode, initial, preferences, calls:[], removed:[], pending:new Map(), manual:['switch','progress'].includes(mode), failSave:false };
+const context = {actorId:'123',accountId:'123',origin:'https://www.facebook.com',path:'/123/allactivity',name:'บัญชีทดสอบ'};
+window.chrome = {storage:{local:{get:async()=>{if(mode==='storage_error')throw Error('unavailable');return structuredClone(preferences)},set:async value=>{if(state.failSave)throw Error('unavailable');Object.assign(preferences,structuredClone(value))}}},runtime:{sendMessage:async({request:r})=>{
+  state.calls.push(structuredClone(r));
+  if(r.kind==='connect')return {ok:true,context};
+  if(r.kind==='scan'){
+    const available=initial.filter(p=>!state.removed.includes(p.storyId));
+    const start=Number(r.cursor)||0, posts=available.slice(start,start+3), hasNext=start+3<available.length;
+    return {ok:true,posts,hasNext,cursor:hasNext?String(start+3):null};
+  }
+  if(r.kind==='trash'){
+    if(state.manual)return new Promise(resolve=>state.pending.set(r.post.storyId,ok=>{
+      state.pending.delete(r.post.storyId);if(ok)state.removed.push(r.post.storyId);
+      resolve(ok?{ok:true,storyId:r.post.storyId}:{ok:false,message:'ผลทดสอบ: Facebook ไม่รับคำสั่ง'});
+    }));
+    await new Promise(resolve=>setTimeout(resolve,20));state.removed.push(r.post.storyId);return {ok:true,storyId:r.post.storyId};
+  }
+}}};
+window.ack = (id,ok=true) => state.pending.get(id)?.(ok);
+window.startAgain = startCleaner;
+window.result = () => ({running:window.__facebookCleanerRunV1.running,failed:window.__facebookCleanerRunV1.failed,removed:[...state.removed],count:window.__facebookCleanerRunV1.removed});
+startCleaner();
+</script></html>

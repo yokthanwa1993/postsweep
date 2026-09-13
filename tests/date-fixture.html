@@ -18,7 +18,7 @@ const state = window.testState = { mode, initial, preferences, calls:[], removed
 const context = {actorId:'123',accountId:'123',origin:'https://www.facebook.com',path:'/123/allactivity',name:'บัญชีทดสอบ'};
 window.chrome = {storage:{local:{get:async()=>{if(mode==='storage_error')throw Error('unavailable');return structuredClone(preferences)},set:async value=>{if(state.failSave)throw Error('unavailable');Object.assign(preferences,structuredClone(value))}}},runtime:{sendMessage:async({request:r})=>{
   state.calls.push(structuredClone(r));
-  if(r.kind==='connect')return {ok:true,context};
+  if(r.kind==='connect')return mode==='actor_retry'&&r.expectedActorId==='123'?{ok:false,code:'ACTOR_CHANGED',message:'ผลทดสอบ: เปลี่ยนเพจระหว่างเปิดปฏิทินและเริ่มงาน'}:{ok:true,context};
   if(r.kind==='scan'){
     const available=initial.filter(p=>!state.removed.includes(p.storyId));
     const start=Number(r.cursor)||0, posts=available.slice(start,start+3), hasNext=start+3<available.length;
@@ -35,5 +35,5 @@ window.chrome = {storage:{local:{get:async()=>{if(mode==='storage_error')throw E
 window.ack = (id,ok=true) => state.pending.get(id)?.(ok);
 window.startAgain = startCleaner;
 window.result = () => ({running:window.__facebookCleanerRunV1.running,failed:window.__facebookCleanerRunV1.failed,removed:[...state.removed],count:window.__facebookCleanerRunV1.removed});
-startCleaner();
+startCleaner(mode==='actor_retry'?{actorId:'123'}:{});
 </script></html>

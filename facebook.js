@@ -10,12 +10,6 @@ export async function facebookRequest(request) {
   const fail = (code, message, uncertain = false) => ({ ok: false, code, message, uncertain });
   const read = name => { try { return window.require(name); } catch { return undefined; } };
   const string = value => typeof value === 'string' ? value : '';
-  const safeLink = value => {
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:' && (url.hostname === 'facebook.com' || url.hostname.endsWith('.facebook.com')) ? url.href : '';
-    } catch { return ''; }
-  };
   try {
     const url = new URL(location.href);
     if (url.protocol !== 'https:' || !['www.facebook.com', 'web.facebook.com', 'facebook.com'].includes(url.hostname)) {
@@ -162,12 +156,9 @@ export async function facebookRequest(request) {
     }
     const posts = connection.edges.map(edge => {
       const node = edge.node || {};
-      const attached = node.attached_story;
       return {
         storyId: string(node.id), postId: node.post_id == null ? '' : String(node.post_id),
-        title: string(node.title?.text) || string(node.summary?.text) || 'โพสต์',
-        text: string(node.message?.text) || string(attached?.message?.text) || '',
-        createdAt: Number(node.creation_time) || 0, url: safeLink(node.url),
+        createdAt: Number(node.creation_time) || 0,
         canTrash: Array.isArray(edge.options) && edge.options.some(option => option.key === 'MOVE_TO_TRASH')
           && Boolean(node.id) && /^\d+$/.test(String(node.post_id))
       };

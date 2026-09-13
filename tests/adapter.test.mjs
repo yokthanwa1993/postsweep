@@ -58,7 +58,14 @@ test('structured rejection is a failure without success or retry',async()=>{cons
 test('GraphQL errors prevent accepting partial success',async()=>{const h=harness({response:{errors:[{code:190,message:secret}],data:sample.data}});const r=await h.run({kind:'scan',context});assert.equal(r.ok,false);assert(!JSON.stringify(r).includes(secret))});
 test('newline streaming and anti-JSON prefix parse correctly',async()=>{const h=harness({response:'for (;;);'+JSON.stringify(sample)+'\n'+JSON.stringify({extensions:{is_final:true}})});assert.equal((await h.run({kind:'scan',context})).posts.length,25)});
 test('returned actor must match the connected identity',async()=>{const response=structuredClone(sample);response.data.viewer.activity_log_actor.id='wrong';const h=harness({response});assert.equal((await h.run({kind:'scan',context})).code,'RESPONSE_ACTOR')});
-test('missing options and unsafe links are filtered',async()=>{const response=structuredClone(sample);const edge=response.data.viewer.activity_log_actor.activity_log_stories.edges[0];edge.options=[];edge.node.url='javascript:alert(1)';const r=await harness({response}).run({kind:'scan',context});assert.equal(r.posts[0].canTrash,false);assert.equal(r.posts[0].url,'')});
+test('scan returns only identifiers, dates and eligibility, excluding post content and links',async()=>{
+ const response=structuredClone(sample);const edge=response.data.viewer.activity_log_actor.activity_log_stories.edges[0];
+ edge.options=[];edge.node.title={text:'PRIVATE_TEST_TITLE'};edge.node.message={text:'PRIVATE_TEST_MESSAGE'};
+ edge.node.attached_story={message:{text:'PRIVATE_TEST_ATTACHMENT'}};edge.node.url='https://www.facebook.com/123/posts/1000?test=PRIVATE_TEST_LINK';
+ const r=await harness({response}).run({kind:'scan',context});assert.equal(r.posts[0].canTrash,false);
+ assert.deepEqual(Object.keys(r.posts[0]).sort(),['canTrash','createdAt','postId','storyId']);
+ assert(!JSON.stringify(r).includes('PRIVATE_TEST_'));
+});
 test('changed schema fails closed',async()=>{const response=structuredClone(sample);delete response.data.viewer.activity_log_actor.activity_log_stories.page_info;assert.equal((await harness({response}).run({kind:'scan',context})).code,'SCHEMA_CHANGED')});
 
 const september = { kind: 'month', year: 2026, month: 9 };

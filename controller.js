@@ -1,4 +1,4 @@
-// Injected into the extension's isolated world. Clicking the toolbar icon starts the job.
+// Injected into the extension's isolated world after Start in the toolbar popup.
 export function startCleaner(options = {}) {
   const KEY = '__facebookCleanerRunV1';
   const existing = globalThis[KEY];
@@ -6,6 +6,9 @@ export function startCleaner(options = {}) {
   existing?.remove();
   const previousFocus = document.activeElement;
   const state = { running: true, stop: false, removed: 0, failed: false, uncertain: 0, active: 0, startedAt: Date.now(), phase: 'connecting', speedLevel: 5, speedChanged: false, period: { kind: 'all' }, editing: false, lastRemovedAt: null, oldestRemovedAt: null, scannedAt: null };
+  // Keep the popup's selected profile even when the first connection fails.
+  // The period editor must not retry without that identity check.
+  state.actorId = options.actorId;
   globalThis[KEY] = state;
   const host = document.createElement('div');
   host.id = 'facebook-cleaner-panel';

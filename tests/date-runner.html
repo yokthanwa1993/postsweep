@@ -4,14 +4,22 @@ const wait=async fn=>{for(let i=0;i<500;i++){if(fn())return;await sleep(20)}thro
 const assert=(v,m)=>{if(!v)throw Error(m)};
 const same=(a,b)=>JSON.stringify([...a].sort())===JSON.stringify([...b].sort());
 let passed=0;
-const cases=['month','day','range','leap','invalid','storage_error','progress','switch','cancel','save_failure','persist','all_dates'];
+const cases=['month','day','range','leap','invalid','storage_error','progress','switch','cancel','save_failure','persist','all_dates','actor_retry'];
 for(const name of cases){
   const li=document.createElement('li');li.textContent=name+' — testing';document.getElementById('results').append(li);
   const f=document.createElement('iframe');f.src='date-fixture.html?mode='+(['cancel','save_failure','persist','all_dates'].includes(name)?'month':name);document.getElementById('frames').append(f);await new Promise(r=>f.onload=r);
   try{
     const w=f.contentWindow;await wait(()=>w.result);const getRoot=()=>w.document.getElementById('facebook-cleaner-panel').shadowRoot;
     const root=getRoot();const $=id=>root.getElementById(id);const s=w.testState;
-    if(name==='progress'){
+    if(name==='actor_retry'){
+      await wait(()=>!w.result().running);
+      assert(w.result().failed&&s.removed.length===0,'initial actor mismatch was not blocked');
+      $('edit-period').click();$('apply-period').click();
+      await wait(()=>getRoot()!==root);await wait(()=>!w.result().running);
+      const connects=s.calls.filter(call=>call.kind==='connect');
+      assert(connects.length===2&&connects.every(call=>call.expectedActorId==='123'),'retry lost the selected profile');
+      assert(w.result().failed&&s.removed.length===0,'retry bypassed the profile mismatch');
+    }else if(name==='progress'){
       await wait(()=>s.pending.size===3);
       assert($('current-date-label').textContent==='กำลังลบวันที่','missing current date label');
       assert($('current-date').textContent.includes('12')&&$('current-date').textContent.includes('14'),'concurrent date range not shown');

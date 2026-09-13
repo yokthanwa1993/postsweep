@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+dist/
+work/
+.env
+.env.*
+*.har
+*.log
+*.zip
+*.pem
+*.key

@@ -1,0 +1,38 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>กำลังทดสอบส่วนขยาย</title><style>body{font:16px -apple-system,Thonburi,Tahoma,sans-serif;color:#31513a;background:#f6f8f0;margin:35px;line-height:1.8}li{padding:4px}iframe{width:900px;height:590px;border:1px solid #dae3d1;border-radius:16px}h1{font-size:25px}</style><h1 id="title">กำลังทดสอบส่วนขยายด้วยข้อมูลจำลอง…</h1><ol id="results"></ol><div id="frames"></div><script type="module">
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const results=document.getElementById('results');
+const waitFor=async(fn)=>{for(let i=0;i<600;i++){if(fn())return;await sleep(50)}throw Error('timeout')};
+const frame=async(mode)=>{const f=document.createElement('iframe');f.src='browser-fixture.html?mode='+mode;document.getElementById('frames').append(f);await new Promise(r=>f.onload=r);await waitFor(()=>typeof f.contentWindow.result==='function');return f};
+const assert=(condition,message)=>{if(!condition)throw Error(message)};
+let passed=0;
+for(const mode of ['complete','stale','error','mismatch','cycle','stop','double','lock','ready','stop_ready']){
+ const li=document.createElement('li');li.textContent=mode+' — กำลังทดสอบ';results.append(li);
+ let f,second;
+ try{
+  f=await frame(mode==='lock'?'double':mode);const w=f.contentWindow;
+  if(mode==='stop_ready')w.document.getElementById('facebook-cleaner-panel').shadowRoot.getElementById('stop').click();
+  if(['stop','double','lock'].includes(mode)){
+   await waitFor(()=>w.testState.inFlight===3);
+   if(mode==='stop')w.document.getElementById('facebook-cleaner-panel').shadowRoot.getElementById('stop').click();
+   if(mode==='double')w.startAgain();
+   if(mode==='lock'){
+    second=await frame('double');await waitFor(()=>!second.contentWindow.result().running);const r=second.contentWindow.result();assert(r.failed&&r.removed===0,'second tab should not mutate');
+    w.document.getElementById('facebook-cleaner-panel').shadowRoot.getElementById('stop').click();
+   }
+  }
+  await waitFor(()=>!w.result().running);const r=w.result();assert(r.maxInFlight<=3,'concurrency > 3');assert(r.removed===r.unique,'duplicate mutation');
+  if(['complete','stale','double','ready'].includes(mode)){assert(r.removed===r.expected,`missed posts ${r.removed}/${r.expected}`);assert(!r.failed,'unexpected failure')}
+  if(mode==='ready')assert(r.connects===4,'did not wait for account modules');
+  if(mode==='stop_ready')assert(r.removed===0&&!r.failed&&r.connects===1,'stop while loading should prevent deletion');
+  if(mode==='double'){assert(r.connects===1&&r.hostCount===1,'duplicate job or panel')}
+  if(mode==='stop'){assert(r.removed===3,'stop should drain exactly the 3 in-flight requests');assert(!r.failed,'stop should not fail')}
+  if(mode==='error'){assert(r.failed&&r.removed<=2,'error must stop new dispatches')}
+  if(mode==='mismatch'){assert(r.failed&&r.removed===0&&r.requests===1,'identity mismatch must block all other calls')}
+  if(mode==='cycle'){assert(r.failed&&r.requests<=4,'pagination loop not stopped')}
+  li.textContent='PASS — '+mode+' · สำเร็จ '+r.removed+' รายการ · ส่งพร้อมกันสูงสุด '+r.maxInFlight;passed++;
+ }catch(e){li.textContent='FAIL — '+mode+' · '+e.message;li.style.color='#a43f30'}
+ if(mode!=='lock')f?.remove();second?.remove();
+}
+document.getElementById('title').textContent=`ผลทดสอบ ${passed}/10 ผ่าน — ไม่มีการลบโพสต์จริง`;
+document.title=`${passed===10?'PASS':'FAIL'} ${passed}/10 — Facebook Cleaner`;
+</script></html>

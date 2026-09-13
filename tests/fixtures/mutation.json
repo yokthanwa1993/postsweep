@@ -1,0 +1,11 @@
+{
+  "data": {
+    "activity_log_story_curation": {
+      "success": true,
+      "error": null,
+      "story": {
+        "id": "test-story-0"
+      }
+    }
+  }
+}

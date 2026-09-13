@@ -1,0 +1,35 @@
+<!doctype html><html lang="th"><meta charset="utf-8"><title>Facebook Cleaner — local test</title><style>body{background:#f2f3ef;color:#586453;font:16px -apple-system,Thonburi,Tahoma,sans-serif;padding:50px;line-height:1.8}main{max-width:730px;margin:auto}article{background:white;border:1px solid #e1e6db;border-radius:13px;padding:22px;margin:17px 0;color:#96a08c}.test-label{font-size:11px;letter-spacing:1px;color:#90a581}h1{color:#40553a;font-size:30px}</style><main><div class="test-label">LOCAL TEST / ข้อมูลจำลอง</div><h1>ทดสอบการลบโพสต์ทั้งหมด</h1><p>หน้าทดสอบนี้ไม่มีการเชื่อมต่อกับ Facebook<br>หน้าต่างกลางจอคือส่วนขยายจริงที่ทำงานกับข้อมูลจำลอง</p><article>โพสต์ตัวอย่างที่ 1</article><article>โพสต์ตัวอย่างที่ 2</article><article>โพสต์ตัวอย่างที่ 3</article></main><script type="module">
+import { startCleaner } from '../controller.js';
+const mode=new URL(location.href).searchParams.get('mode')||'complete';
+const context={actorId:'123',accountId:'123',origin:'https://www.facebook.com',path:'/123/allactivity',name:'บัญชีทดสอบ'};
+const slow=['stop','double','screenshot'].includes(mode);
+const initial=Array.from({length:mode==='screenshot'?1800:mode==='complete'?63:12},(_,i)=>({storyId:'story-'+i,postId:String(i+1),canTrash:mode==='complete'?i%11!==0:true}));
+const savedSpeed = new URL(location.href).searchParams.get('speed');
+const preferences = { cleanerSpeedLevel: savedSpeed ? Number(savedSpeed) : 5 };
+const state=window.testState={mode,calls:[],inFlight:0,maxInFlight:0,removed:[],connects:0,preferences,dispatches:[]};
+let scans=0;
+window.chrome={storage:{local:{get:async()=>({...preferences}),set:async values=>{Object.assign(preferences,values)}}},runtime:{sendMessage:async ({request:r})=>{
+ state.calls.push({kind:r.kind,id:r.post?.storyId,cursor:r.cursor});
+ if(r.kind==='connect'){state.connects++;if(['ready','stop_ready'].includes(mode)&&state.connects<=3)return {ok:false,code:'NOT_READY',message:'loading'};return mode==='mismatch'?{ok:false,code:'ACTOR_MISMATCH',message:'บัญชีที่ล็อกอินไม่ตรงกับเจ้าของลิงก์'}:{ok:true,context}}
+ if(r.kind==='scan'){
+  scans++;
+  if(mode==='cycle')return {ok:true,posts:[],hasNext:true,cursor:'same'};
+  const available=mode==='stale'?initial:initial.filter(p=>!state.removed.includes(p.storyId));
+  const offset=Number(r.cursor)||0;const posts=available.slice(offset,offset+7);
+  return {ok:true,posts,cursor:offset+7<available.length?String(offset+7):null,hasNext:offset+7<available.length};
+ }
+ if(r.kind==='trash'){
+  state.dispatches.push({at:performance.now(),level:window.__facebookCleanerRunV1.speedLevel,active:state.inFlight+1});
+  state.inFlight++;state.maxInFlight=Math.max(state.maxInFlight,state.inFlight);
+  await new Promise(r=>setTimeout(r,slow?900:20));state.inFlight--;
+  if(mode==='error'&&r.post.storyId==='story-0')return {ok:false,uncertain:true,message:'Facebook จำกัดความเร็วชั่วคราว'};
+  state.removed.push(r.post.storyId);return {ok:true,storyId:r.post.storyId};
+ }
+}}};
+window.startAgain=startCleaner;
+startCleaner();
+window.result=()=>{
+ const root=document.getElementById('facebook-cleaner-panel')?.shadowRoot;
+ return {running:window.__facebookCleanerRunV1?.running,failed:window.__facebookCleanerRunV1?.failed,removed:state.removed.length,unique:new Set(state.removed).size,expected:initial.filter(p=>p.canTrash).length,maxInFlight:state.maxInFlight,connects:state.connects,status:root?.getElementById('status')?.textContent,skipped:root?.getElementById('skipped')?.textContent,hostCount:document.querySelectorAll('#facebook-cleaner-panel').length,requests:state.calls.length};
+};
+</script></html>

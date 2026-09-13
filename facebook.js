@@ -115,7 +115,8 @@ export async function facebookRequest(request) {
     let response, raw;
     try {
       sentMutation = mutation;
-      response = await fetch('/api/graphql/', {
+      // Use the verified location origin, not a page-controlled <base> URL.
+      response = await fetch(new URL('/api/graphql/', url.origin).href, {
         method: 'POST', credentials: 'same-origin', redirect: 'error',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-FB-Friendly-Name': operation },
         body: body.toString(), signal: aborter.signal

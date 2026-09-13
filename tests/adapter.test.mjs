@@ -13,7 +13,7 @@ const first = sample.data.viewer.activity_log_actor.activity_log_stories.edges[0
 const post = {storyId:first.id,postId:first.post_id,canTrash:true};
 const secret = 'TEST_TOKEN_MUST_STAY_IN_PAGE';
 
-function harness({ url = pageURL, response = sample, userId = actor, accountId = 'test-account', status = 200, throwFetch = false, documentId } = {}) {
+function harness({ url = pageURL, response = sample, userId = actor, accountId = 'test-account', status = 200, throwFetch = false, documentId, baseURI = url } = {}) {
   const calls = [];
   const modules = {
     CurrentUserInitialData:{ USER_ID:userId, ACCOUNT_ID:accountId, NAME:'ทดสอบ' },
@@ -21,7 +21,7 @@ function harness({ url = pageURL, response = sample, userId = actor, accountId =
   };
   if(documentId)modules['CometActivityLogMainContentRootQuery.graphql']={params:{id:documentId}};
   const sandbox = vm.createContext({URL,URLSearchParams,AbortController,setTimeout,clearTimeout,crypto:webcrypto,devicePixelRatio:2,location:{href:url},window:{require:name=>modules[name]},fetch:async (url,options)=>{
-    calls.push({url,options,body:new URLSearchParams(options.body)});
+    calls.push({url,resolvedURL:new URL(url,baseURI).href,options,body:new URLSearchParams(options.body)});
     if(throwFetch)throw new Error('offline');
     return {ok:status<400,status,text:async()=>typeof response==='string'?response:JSON.stringify(response)};
   }});
@@ -36,6 +36,12 @@ test('representative activity response parses and returns only post metadata', a
   assert.equal(JSON.parse(body.get('variables')).category_key,'MANAGEPOSTSPHOTOSANDVIDEOS');
 });
 test('connect never makes a network request',async()=>{const h=harness();assert.equal((await h.run({kind:'connect'})).ok,true);assert.equal(h.calls.length,0)});
+test('a changed document base cannot redirect session parameters away from Facebook',async()=>{
+ const h=harness({baseURI:'https://untrusted.invalid/'});
+ assert.equal((await h.run({kind:'scan',context})).ok,true);
+ assert.equal(h.calls[0].resolvedURL,'https://www.facebook.com/api/graphql/');
+ assert.equal(h.calls[0].options.redirect,'error');
+});
 test('account-owned log works while the current profile is a Page',async()=>{const h=harness({userId:'99999',accountId:actor});const c=await h.run({kind:'connect'});assert.equal(c.ok,true);assert.equal(c.context.actorId,actor);assert.equal(c.context.sessionActorId,'99999');assert.equal((await h.run({kind:'scan',context:c.context})).ok,true);assert.equal(h.calls[0].body.get('av'),actor)});
 test('wrong logged-in account is blocked before any request',async()=>{const h=harness({userId:'999'});const r=await h.run({kind:'trash',context,post});assert.equal(r.code,'ACTOR_MISMATCH');assert.equal(h.calls.length,0)});
 test('account switch during job is blocked',async()=>{const h=harness({accountId:'another-account'});assert.equal((await h.run({kind:'trash',context,post})).code,'CONTEXT_CHANGED');assert.equal(h.calls.length,0)});
